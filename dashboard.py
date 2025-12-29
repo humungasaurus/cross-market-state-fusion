@@ -495,6 +495,7 @@ HTML_TEMPLATE = """
         let tradesList = [];
         let updateCount = 0;
         let bestTrade = 0, worstTrade = 0;
+        let lastMarketsHash = '';  // Track if markets actually changed
 
         function updateClock() {
             document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', {hour12: false});
@@ -561,8 +562,32 @@ HTML_TEMPLATE = """
             const markets = d.markets || {};
             const positions = d.positions || {};
             const grid = document.getElementById('markets-grid');
-            if (Object.keys(markets).length > 0) {
-                grid.innerHTML = Object.entries(markets).map(([cid, m]) => {
+            const marketKeys = Object.keys(markets);
+            // Create hash to detect structural changes (new/removed markets)
+            const marketsHash = marketKeys.sort().join(',');
+            const needsRebuild = marketsHash !== lastMarketsHash;
+
+            if (marketKeys.length > 0) {
+                if (needsRebuild) {
+                    // Full rebuild only when markets change
+                    lastMarketsHash = marketsHash;
+                    grid.innerHTML = Object.entries(markets).map(([cid, m]) => {
+                        return `<div class="market" data-cid="${cid}">
+                            <div class="market-head">
+                                <span class="market-asset">${m.asset || 'ASSET'}</span>
+                                <span class="market-time"></span>
+                            </div>
+                            <div class="market-prob"></div>
+                            <div class="market-delta"></div>
+                            <div class="market-flow"><div class="flow-bar"></div></div>
+                            <div class="market-pos-wrap"></div>
+                        </div>`;
+                    }).join('');
+                }
+                // Update existing elements in-place (fast)
+                Object.entries(markets).forEach(([cid, m]) => {
+                    const el = grid.querySelector(`[data-cid="${cid}"]`);
+                    if (!el) return;
                     const pos = positions[cid];
                     const hasPos = pos?.size > 0;
                     const isLong = pos?.side === 'UP';
@@ -573,20 +598,24 @@ HTML_TEMPLATE = """
                         posPnl = isLong ? (m.prob - pos.entry_price) * pos.size : (pos.entry_price - m.prob) * pos.size;
                     }
                     const flowPct = Math.min(50, Math.abs(vel) * 5000);
-                    return `
-                        <div class="market ${hasPos ? 'active' : ''}">
-                            <div class="market-head">
-                                <span class="market-asset">${m.asset || 'ASSET'}</span>
-                                <span class="market-time ${timeLeft < 2 ? 'urgent' : ''}">${fmtTime(timeLeft)}</span>
-                            </div>
-                            <div class="market-prob">${(m.prob * 100).toFixed(1)}%</div>
-                            <div class="market-delta ${vel > 0.001 ? 'up' : vel < -0.001 ? 'down' : ''}">${vel >= 0 ? '+' : ''}${(vel * 100).toFixed(2)}%</div>
-                            <div class="market-flow">
-                                ${vel >= 0 ? `<div class="flow-bar buy" style="width:${flowPct}%"></div>` : `<div class="flow-bar sell" style="width:${flowPct}%"></div>`}
-                            </div>
-                            ${hasPos ? `<div class="market-pos ${isLong ? 'long' : 'short'}"><span>${isLong ? 'long' : 'short'} $${pos.size}</span><span>${fmt(posPnl)}</span></div>` : '<div class="no-pos">-</div>'}
-                        </div>`;
-                }).join('');
+
+                    el.className = 'market' + (hasPos ? ' active' : '');
+                    el.querySelector('.market-time').textContent = fmtTime(timeLeft);
+                    el.querySelector('.market-time').className = 'market-time' + (timeLeft < 2 ? ' urgent' : '');
+                    el.querySelector('.market-prob').textContent = (m.prob * 100).toFixed(1) + '%';
+                    const deltaEl = el.querySelector('.market-delta');
+                    deltaEl.textContent = (vel >= 0 ? '+' : '') + (vel * 100).toFixed(2) + '%';
+                    deltaEl.className = 'market-delta' + (vel > 0.001 ? ' up' : vel < -0.001 ? ' down' : '');
+                    const flowBar = el.querySelector('.flow-bar');
+                    flowBar.className = 'flow-bar ' + (vel >= 0 ? 'buy' : 'sell');
+                    flowBar.style.width = flowPct + '%';
+                    const posWrap = el.querySelector('.market-pos-wrap');
+                    if (hasPos) {
+                        posWrap.innerHTML = `<div class="market-pos ${isLong ? 'long' : 'short'}"><span>${isLong ? 'long' : 'short'} $${pos.size}</span><span>${fmt(posPnl)}</span></div>`;
+                    } else {
+                        posWrap.innerHTML = '<div class="no-pos">-</div>';
+                    }
+                });
             }
 
             if (pnlData.data.length === 0 || pnlData.data[pnlData.data.length - 1] !== pnl) {
@@ -714,7 +743,7 @@ def emit_trade(action: str, asset: str, size: float = 0, pnl: float = None):
 def state_emitter():
     """Periodically emit state updates."""
     while True:
-        time.sleep(1)
+        time.sleep(0.25)  # 250ms for responsive UI
         emit_state()
 
 

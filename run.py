@@ -243,8 +243,9 @@ class TradingEngine:
     async def decision_loop(self):
         """Main trading loop."""
         tick = 0
+        tick_interval = 0.5  # 500ms ticks for faster decisions
         while self.running:
-            await asyncio.sleep(1)
+            await asyncio.sleep(tick_interval)
             tick += 1
             now = datetime.now(timezone.utc)
 
